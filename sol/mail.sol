@@ -44,9 +44,6 @@ contract Mail is SimpleAccessControl {
 
     mapping(ClassType => PackageDayCost) public packageDayCost;
 
-    mapping(string => Package) public trackNumber;
-    
-
     /*   ДЕНЬГА ПЕРЕВОД   */
     struct MoneyTransfer {
         address sender;
@@ -63,11 +60,15 @@ contract Mail is SimpleAccessControl {
         uint8 weight;
         uint256 updateTimestamp;
         uint256 originalTimestamp;  // пусть будет по utc
+        bool rejected;
     }
     mapping(string => TrackData) public trackingSystem;
+    mapping(string => Package) public trackNumber;
 
     mapping(address => uint256) public workerToNumber;
     mapping(uint256 => uint256) public numberToMailIndex;  // numMail => realIndex
+
+    event PackageReceived(string indexed trackNumber);
 
     constructor(uint256[17] memory mailIndexes) {
         packageDayCost[ClassType.First] = PackageDayCost(5, 0.5 ether);
@@ -78,6 +79,8 @@ contract Mail is SimpleAccessControl {
         for(i = 0; i < 17; i ++) {
             numberToMailIndex[i] = mailIndexes[i];
         }
+
+        account[address(this)].role = Role.System;
     }
 
     
@@ -93,8 +96,7 @@ contract Mail is SimpleAccessControl {
         Type packType,
         ClassType classType,
         uint8 weight,        
-        uint256 precious,
-        uint256 numberMailTo  //!
+        uint256 precious
         ) external 
         hasRole(msg.sender, Role.Mailer) 
         inSystem(sender) 
@@ -106,18 +108,21 @@ contract Mail is SimpleAccessControl {
         account[sender].balance -= costSum;
 
         uint256 numberMailFrom = workerToNumber[msg.sender];
-        require(numberMailTo != 0, "Wrong number index for receiver mail");
+        uint256 numberMailTo = account[receiver].realAddress.numberMail;
 
         string memory _trackNumber = string(
             abi.encodePacked(
                 "RR", date, index, numberMailFrom, numberMailTo
             )
         );
+
+        require(trackNumber[_trackNumber].sender == address(0), "Double sending");
+
         trackNumber[_trackNumber] = Package(
             sender, receiver, packType, classType,
             weight, precious, account[sender].realAddress, account[receiver].realAddress
         );
-        trackingSystem[_trackNumber] = TrackData(numberMailFrom, weight, 0, block.timestamp);
+        trackingSystem[_trackNumber] = TrackData(numberMailFrom, weight, 0, block.timestamp, false);
     }
 
     /**
@@ -129,19 +134,111 @@ contract Mail is SimpleAccessControl {
         external 
         hasRole(msg.sender, Role.Mailer) 
     {
+        require(weight <= 10, "Weight exceeds limit");
+
         TrackData storage trackData = trackingSystem[_trackNumber];
         uint256 currentNumberMail = workerToNumber[msg.sender];
         require(checkIfCanUpdate(trackData.numberMail, currentNumberMail), "Can't be updated");
         require(!isArrived(_trackNumber));
-        
+
         trackData.numberMail = currentNumberMail;
         trackData.updateTimestamp = block.timestamp;
         trackData.weight = weight;
+
+// Кейс №4
+        if(isArrived(_trackNumber)) {
+            emit PackageReceived(_trackNumber);
+        }
     }
 
-    function receiveDelivery(string memory _trackNumber) external hasRole(msg.sender, Role.Mailer) {
+// Кейс №2
+    function payBackForUnReceivedDelivery(string memory _trackNumber) external hasRole(msg.sender, Role.User) {
+        // not if was rejected
+        require(trackNumber[_trackNumber].sender != address(this));
 
+        ClassType classType =  trackNumber[_trackNumber].classType;
+        // просрочено обновление посылки
+        require(trackingSystem[_trackNumber].updateTimestamp > trackingSystem[_trackNumber].originalTimestamp + packageDayCost[classType].deliverDays);
+        
+        uint256 precious = trackNumber[_trackNumber].precious;
+        uint256 originalSumCost = calculateSumCost(classType, trackNumber[_trackNumber].weight, precious);
+        
+        if(classType == ClassType.First) {
+            _claimFunds(msg.sender, originalSumCost);
+        } else if (classType == ClassType.Second) {
+            _claimFunds(msg.sender, originalSumCost/2 + precious);
+        } else {
+            _claimFunds(msg.sender, precious);
+        }
     }
+
+// Kейс №3
+    function PackageReceivedByUser(string memory _trackNumber) external hasRole(msg.sender, Role.Mailer) {
+        require(trackingSystem[_trackNumber].updateTimestamp + 14 days >= block.timestamp);
+        
+        // проверка на то что именно это почт отделение получило посылку => может распоряжаться ею
+        uint256 numberMailFrom = workerToNumber[msg.sender];
+        require(isArrived(_trackNumber) && trackingSystem[_trackNumber].numberMail == numberMailFrom);
+
+
+        // however we can our tracks are remained, we can iterate through events 
+        delete trackNumber[_trackNumber];
+        delete trackingSystem[_trackNumber];
+    }
+
+//Кейс 3,4
+
+    // by receiver
+    function rejectPackage(string memory _trackNumber) external {
+        require(!trackingSystem[_trackNumber].rejected);
+
+        Package memory package = trackNumber[_trackNumber];
+        uint8 originalWeight = package.weight;
+        uint8 receivedWeight = trackingSystem[_trackNumber].weight;
+
+        if(receivedWeight > (originalWeight*115)/100 || receivedWeight < (originalWeight*115)/100) {
+            require(package.receiver == msg.sender);
+            trackingSystem[_trackNumber].rejected = true;
+            _claimFunds(package.sender, calculateSumCost(package.classType, originalWeight, package.precious));
+        }
+    }
+
+    function sendPackageBackCommon(string memory _trackNumber, string memory date, uint256 index) external {
+        if(!trackingSystem[_trackNumber].rejected) {
+            require(trackingSystem[_trackNumber].updateTimestamp + 14 days >= block.timestamp);
+        } 
+
+        sendPackageBack(_trackNumber, date, index);
+    }
+    
+
+
+    function sendPackageBack(string memory _trackNumber, string memory date, uint256 index) private hasRole(msg.sender, Role.Mailer) {
+        uint256 numberMailFrom = workerToNumber[msg.sender];
+        require(isArrived(_trackNumber) && trackingSystem[_trackNumber].numberMail == numberMailFrom);
+
+        Package memory oldPackage = trackNumber[_trackNumber];
+        uint256 numberMailTo = account[oldPackage.receiver].realAddress.numberMail;
+        
+        string memory newTrackNumber = string(
+            abi.encodePacked(
+                "RR", date, index, numberMailFrom, numberMailTo
+            )
+        );
+        require(trackNumber[newTrackNumber].sender == address(0), "Double sending");
+
+        trackNumber[newTrackNumber] = Package(
+            address(this), oldPackage.sender,
+            oldPackage.packType, oldPackage.classType,
+            trackingSystem[_trackNumber].weight, oldPackage.precious,
+            RealAddress(0,"","",""), oldPackage.addressSender
+        );
+        trackingSystem[newTrackNumber] = TrackData(numberMailFrom,  trackingSystem[_trackNumber].weight, 0, block.timestamp, false);
+
+        delete trackNumber[_trackNumber];
+        delete trackingSystem[_trackNumber];
+   }
+
 
 //стоимОтКласса*Вес+ценность*0.1
     function calculateSumCost(ClassType classType, uint8 weight, uint256 precious) 
@@ -206,5 +303,4 @@ contract Mail is SimpleAccessControl {
             return true;
         return false;
     }
-
 }

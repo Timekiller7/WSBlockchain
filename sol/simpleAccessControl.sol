@@ -4,7 +4,7 @@ pragma solidity ^0.8.17;
 
 abstract contract SimpleAccessControl {
 
-    enum Role { None, MainAdmin, Admin, Mailer, User }
+    enum Role { None, MainAdmin, Admin, Mailer, User, System }
 
     struct RealAddress {
         uint256 numberMail;
@@ -79,8 +79,12 @@ abstract contract SimpleAccessControl {
     function getPersonRole(address person) public view returns(Role) {
         return account[person].role;
     }
-    function claimFunds(uint256 toClaim) hasRole(msg.sender, Role.MainAdmin) external {
-        (bool sent, ) = (msg.sender).call{value: toClaim}("");
+    function claimFunds(address receiver, uint256 toClaim) external hasRole(msg.sender, Role.MainAdmin) {
+        _claimFunds(receiver, toClaim);
+    }
+
+    function _claimFunds(address receiver, uint256 toClaim) internal {
+        (bool sent, ) = (receiver).call{value: toClaim}("");
         require(sent, "Failed to send Ether");
     }
 

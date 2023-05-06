@@ -112,7 +112,7 @@ contract Mail is SimpleAccessControl {
         inSystem(receiver)
     {
         uint256 costSum = calculateSumCost(classType,weight,precious);
-        require (costSum >= account[sender].balance, "Not enough balance");
+        require (costSum <= account[sender].balance, "Not enough balance");
 
         account[sender].balance -= costSum;
 
@@ -169,6 +169,7 @@ contract Mail is SimpleAccessControl {
     function payBackForUnReceivedDelivery(string memory _trackNumber) external hasRole(msg.sender, Role.User) {
         // not if was rejected
         require(trackNumber[_trackNumber].sender != address(this));
+        require(msg.sender == trackNumber[_trackNumber].sender);
 
         ClassType classType =  trackNumber[_trackNumber].classType;
         // просрочено обновление посылки
@@ -212,7 +213,7 @@ contract Mail is SimpleAccessControl {
         emit PackageRejectedByUser(_trackNumber);
     }
 
-    function sendPackageBackCommon(string memory _trackNumber, string memory date, uint256 index) external {
+    function sendPackageBackCommon(string memory _trackNumber, string memory date, uint256 index) external hasRole(msg.sender, Role.Mailer) {
         Package memory package = trackNumber[_trackNumber];
         require(package.sender != address(0), "Package doesnt exist");
 
@@ -234,7 +235,7 @@ contract Mail is SimpleAccessControl {
     }
     
 
-    function sendPackageBack(string memory _trackNumber, string memory date, uint256 index) private hasRole(msg.sender, Role.Mailer) {
+    function sendPackageBack(string memory _trackNumber, string memory date, uint256 index) private {
         uint256 numberMailFrom = workerToNumber[msg.sender];
         require(isArrived(_trackNumber) && trackingSystem[_trackNumber].numberMail == numberMailFrom);
 

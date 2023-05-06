@@ -4,10 +4,10 @@ pragma solidity ^0.8.17;
 
 abstract contract SimpleAccessControl {
 
-    enum Role { None, MainAdmin, Admin, Mailer }
+    enum Role { None, MainAdmin, Admin, Mailer, User }
 
     struct RealAddress {
-        uint256 index;
+        uint256 numberMail;
         string city;
         string street;
         string house;
@@ -23,28 +23,43 @@ abstract contract SimpleAccessControl {
     
     modifier inSystem(address person) {
         require(
-            getPersonRole(person) == Role.None,
+            getPersonRole(person) != Role.None,
             "Person isnt in system."
         );
         _;
     }
 
-    modifier onlyMailer(address person) {
+    modifier hasRole(address person, Role role) {
         require(
-            getPersonRole(person) == Role.Mailer,
-            "Only mailer can call function"
+            getPersonRole(person) == role,
+            "You have no rights to call function"
         );
         _;
-    } 
+    }
+
+    function registerInMail(
+        string memory surname, 
+        uint256 numberMail, 
+        string memory city, 
+        string memory street, 
+        string memory house
+        ) 
+        external 
+        hasRole(msg.sender, Role.None) 
+    {
+        account[msg.sender].role = Role.User;
+        changeAddress(numberMail,city,street,house);
+        changeSurname(surname);
+    }
 
     function changeSurname(string memory newSurname) public inSystem(msg.sender) {
-        require(keccak256(bytes(newSurname)) == keccak256(bytes("")));
+        require(keccak256(bytes(newSurname)) != keccak256(bytes("")));
 
         account[msg.sender].surname = newSurname;         
     }
 
     function changeAddress(
-        uint256 index, 
+        uint256 numberMail, 
         string memory city, 
         string memory street, 
         string memory house
@@ -52,16 +67,21 @@ abstract contract SimpleAccessControl {
         public 
         inSystem(msg.sender)
     {
-        require(index != 0); 
-        require(keccak256(bytes(city)) == keccak256(bytes("")));
-        require(keccak256(bytes(street)) == keccak256(bytes("")));
-        require(keccak256(bytes(house)) == keccak256(bytes("")));
+        require(numberMail <= 16); 
+        require(keccak256(bytes(city)) != keccak256(bytes("")));
+        require(keccak256(bytes(street)) != keccak256(bytes("")));
+        require(keccak256(bytes(house)) != keccak256(bytes("")));
 
-        account[msg.sender].realAddress = RealAddress(index,city,street,house);
+        account[msg.sender].realAddress = RealAddress(numberMail,city,street,house);
     }
+        
 
     function getPersonRole(address person) public view returns(Role) {
         return account[person].role;
+    }
+    function claimFunds(uint256 toClaim) hasRole(msg.sender, Role.MainAdmin) external {
+        (bool sent, ) = (msg.sender).call{value: toClaim}("");
+        require(sent, "Failed to send Ether");
     }
 
 }

@@ -187,31 +187,35 @@ contract Mail is SimpleAccessControl {
     }
 
 //Кейс 3,4
-
     // by receiver
     function rejectPackage(string memory _trackNumber) external {
         require(!trackingSystem[_trackNumber].rejected);
+        require(trackNumber[_trackNumber].receiver == msg.sender);
 
-        Package memory package = trackNumber[_trackNumber];
-        uint8 originalWeight = package.weight;
-        uint8 receivedWeight = trackingSystem[_trackNumber].weight;
-
-        if(receivedWeight > (originalWeight*115)/100 || receivedWeight < (originalWeight*115)/100) {
-            require(package.receiver == msg.sender);
-            trackingSystem[_trackNumber].rejected = true;
-            _claimFunds(package.sender, calculateSumCost(package.classType, originalWeight, package.precious));
-        }
+        trackingSystem[_trackNumber].rejected = true;
     }
 
     function sendPackageBackCommon(string memory _trackNumber, string memory date, uint256 index) external {
-        if(!trackingSystem[_trackNumber].rejected) {
-            require(trackingSystem[_trackNumber].updateTimestamp + 14 days >= block.timestamp);
-        } 
+        Package memory package = trackNumber[_trackNumber];
+        require(package.sender != address(0), "Package doesnt exist");
+
+        uint8 originalWeight = package.weight;
+        uint8 receivedWeight = trackingSystem[_trackNumber].weight;
+
+        bool userRejected = trackingSystem[_trackNumber].rejected;
+        if(!userRejected) {
+            require(trackingSystem[_trackNumber].updateTimestamp + 14 days < block.timestamp);
+        } else if(userRejected && (
+            receivedWeight > (originalWeight*115)/100 ||
+            receivedWeight < (originalWeight*115)/100)
+            ) 
+        {
+            _claimFunds(package.sender, calculateSumCost(package.classType, originalWeight, package.precious));
+        }
 
         sendPackageBack(_trackNumber, date, index);
     }
     
-
 
     function sendPackageBack(string memory _trackNumber, string memory date, uint256 index) private hasRole(msg.sender, Role.Mailer) {
         uint256 numberMailFrom = workerToNumber[msg.sender];
@@ -302,5 +306,25 @@ contract Mail is SimpleAccessControl {
         )
             return true;
         return false;
+    }
+
+
+    //Сотрудник почтового отделения имеет дополнительный атрибут: 
+    //идентификатор отделения, который состоит из двух первых букв «RR»
+    // RR - на фронте отображается
+    function changeMailerNumber(address[] memory addresses, uint256[] memory mailNumber) external hasRole(msg.sender, Role.Admin) {
+        uint256 len = addresses.length;
+        require(len == mailNumber.length);
+        
+        address accountAddress;
+        uint256 i;
+        for(i; i < len; i++) {
+            accountAddress = addresses[i];
+            
+            require(getPersonRole(accountAddress) == Role.Mailer);
+            require(mailNumber[i] < 17);
+
+            workerToNumber[accountAddress] = mailNumber[i];
+        }
     }
 }

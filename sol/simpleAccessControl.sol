@@ -52,6 +52,39 @@ abstract contract SimpleAccessControl {
         changeSurname(surname);
     }
 
+    function upgradePersons(address[] memory addresses) external {
+        Role callerRole = getPersonRole(msg.sender);
+        require(callerRole == Role.MainAdmin || callerRole == Role.Admin);
+
+        Role newRole = Role(uint256(callerRole)+1);
+
+        uint256 len = addresses.length;
+        uint256 i;
+        address accountAddress;
+
+        for(i; i < len; i++) {
+            accountAddress = addresses[i];
+            require(getPersonRole(accountAddress) == Role.User);
+
+            account[accountAddress].role = newRole;
+        }
+    }
+
+    function downgradePersons(address[] memory addresses) external {
+        Role callerRole = getPersonRole(msg.sender);
+        require(callerRole == Role.MainAdmin || callerRole == Role.Admin);
+        Role addressRoleMustBe = Role(uint256(callerRole)+1);
+   
+        uint256 len = addresses.length;
+        uint256 i;
+        address accountAddress;
+        for(i; i < len; i++) {
+            accountAddress = addresses[i];
+            require(account[accountAddress].role == addressRoleMustBe);
+            account[accountAddress].role = Role.User;
+        }
+    }
+
     function changeSurname(string memory newSurname) public inSystem(msg.sender) {
         require(keccak256(bytes(newSurname)) != keccak256(bytes("")));
 

@@ -68,7 +68,16 @@ contract Mail is SimpleAccessControl {
     mapping(address => uint256) public workerToNumber;
     mapping(uint256 => uint256) public numberToMailIndex;  // numMail => realIndex
 
-    event PackageReceived(string indexed trackNumber);
+    event PackageSent(address indexed sender, address indexed receiver, string indexed trackNumber);
+    event PackageSentMail(uint256 indexed numberMail, string indexed trackNumber, uint256 index);
+    
+    event PackageUpdatedMail(uint256 indexed numberMail, string indexed trackNumber);
+
+    event PackageRejectedByUser(string indexed trackNumber);
+    event PackageReceivedByUser(string indexed trackNumber);
+    event PackageReceivedByMail(uint256 indexed numberMail, string indexed trackNumber);
+
+    event PackagePayBackMail(uint256 indexed numberMail, string indexed trackNumber, string newTrackNumber, uint256 index);
 
     constructor(uint256[17] memory mailIndexes) {
         packageDayCost[ClassType.First] = PackageDayCost(5, 0.5 ether);
@@ -123,6 +132,9 @@ contract Mail is SimpleAccessControl {
             weight, precious, account[sender].realAddress, account[receiver].realAddress
         );
         trackingSystem[_trackNumber] = TrackData(numberMailFrom, weight, 0, block.timestamp, false);
+
+        emit PackageSent(sender,receiver,_trackNumber);
+        emit PackageSentMail(numberMailFrom,_trackNumber,index);
     }
 
     /**
@@ -145,9 +157,11 @@ contract Mail is SimpleAccessControl {
         trackData.updateTimestamp = block.timestamp;
         trackData.weight = weight;
 
+        emit PackageUpdatedMail(currentNumberMail, _trackNumber);
+
 // Кейс №4
         if(isArrived(_trackNumber)) {
-            emit PackageReceived(_trackNumber);
+            emit PackageReceivedByMail(currentNumberMail, _trackNumber);
         }
     }
 
@@ -173,17 +187,18 @@ contract Mail is SimpleAccessControl {
     }
 
 // Kейс №3
-    function PackageReceivedByUser(string memory _trackNumber) external hasRole(msg.sender, Role.Mailer) {
+    function packageReceivedByUser(string memory _trackNumber) external hasRole(msg.sender, Role.Mailer) {
         require(trackingSystem[_trackNumber].updateTimestamp + 14 days >= block.timestamp);
         
         // проверка на то что именно это почт отделение получило посылку => может распоряжаться ею
         uint256 numberMailFrom = workerToNumber[msg.sender];
         require(isArrived(_trackNumber) && trackingSystem[_trackNumber].numberMail == numberMailFrom);
 
-
         // however we can our tracks are remained, we can iterate through events 
         delete trackNumber[_trackNumber];
         delete trackingSystem[_trackNumber];
+
+        emit PackageReceivedByUser(_trackNumber);
     }
 
 //Кейс 3,4
@@ -193,6 +208,8 @@ contract Mail is SimpleAccessControl {
         require(trackNumber[_trackNumber].receiver == msg.sender);
 
         trackingSystem[_trackNumber].rejected = true;
+
+        emit PackageRejectedByUser(_trackNumber);
     }
 
     function sendPackageBackCommon(string memory _trackNumber, string memory date, uint256 index) external {
@@ -241,6 +258,8 @@ contract Mail is SimpleAccessControl {
 
         delete trackNumber[_trackNumber];
         delete trackingSystem[_trackNumber];
+
+        emit PackagePayBackMail(numberMailFrom,_trackNumber,newTrackNumber,index);
    }
 
 
